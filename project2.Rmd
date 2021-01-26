@@ -1,0 +1,514 @@
+---
+title: 'Project: Predicting Diabetes in Pima Indians'
+author: "Viviane Callier"
+date: "1/23/2021"
+output:
+  pdf_document: default
+---
+
+General Procedure: 
+1. Investigate the data
+2. Specify candidate model
+3. Estimate the model parameters
+4. Assess the fitted model
+5. Select informative predictors 
+
+```{r}
+#loading the data
+library(tidyverse)
+library(boot)
+library(glmnet)
+library(olsrr)
+library(tree)
+library(gam)
+
+diabetes <- read_csv("/Users/vc12/Documents/UTSA statistics/DataMining2-spring2021/project diabetes prediction/diabetes.csv")
+
+
+#diabetes <- read_csv("/Users/vivianecallier/Documents/UTSA statistics/DataMining2-spring2021/project diabetes prediction/diabetes.csv")
+
+```
+
+Visualizing the data. 
+```{r}
+ggplot(data = diabetes) +
+  geom_point (mapping = aes(x = BloodPressure, y = Outcome))
+
+```
+
+
+
+#Parametric Approach: Logistic Regression
+As a first proposal, let's try using a logistic regression to predict whether a person will have diabetes or not based on the available predictor variables. 
+
+```{r}
+glm.fits = glm(as.factor(Outcome) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes, family = binomial)
+summary(glm.fits)
+```
+
+
+
+Now, we want to use the predict function to predict the probability that an individual will have diabetes, given values of the predictors.
+```{r}
+#predicting whether an individual will have diabetes given the values of the predictors
+glm.probs = predict(glm.fits, type = "response")
+
+#creating a confusion matrix
+glm.pred = rep("0", nrow(diabetes)) # 0 is healthy
+glm.pred[glm.probs > 0.5] = "1"     # 1 is diabetic
+table(glm.pred, diabetes$Outcome)
+
+#calculating the fraction of days for which the prediction was correct
+mean(glm.pred == diabetes$Outcome)
+mean(glm.pred != diabetes$Outcome)
+```
+
+In this case, the logistic regression correctly predicted the health status (diabetic or healthy) 78 percent of the time. That means that the training error rate is about 22 percent. However, the training error rate is overly optimistic and tends to underestimate the test error rate. To better assess the accuracy of the model, we want to calculate the test error rate. 
+
+```{r}
+
+error = c()
+
+for (i in 1:1000){
+  
+#splitting into training and validation sets
+set.seed(i)
+train = sample(768, 384)
+diabetes.train = diabetes[train,]
+diabetes.test = diabetes[-train,]
+
+#training model on the training set
+glm.fits1 = glm(Outcome ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, family = binomial)
+
+#test error rate
+glm.probs.test = predict(glm.fits1, diabetes.test, type = "response")
+
+#creating a confusion matrix
+glm.pred.test = rep("0", 384)            # 0 is healthy
+glm.pred.test[glm.probs.test > 0.5] = "1"     # 1 is diabetic
+table(glm.pred.test, diabetes.test$Outcome)
+
+#calculating the fraction of days for which the prediction was correct
+error[i] = mean(glm.pred.test != diabetes.train$Outcome)
+
+}
+
+```
+
+
+```{r}
+hist(error, breaks = 50)
+summary(error)
+```
+
+When we do a cross validation by splitting the data into test and validation sets, the model accurately predicts diabetic status only about 57 percent of the time. The mean test error rate is 43.29 percent, and I plotted the distribution of test error rate. 
+
+
+
+```{r}
+#cross validation error using LOOCV
+
+#creating a cost function
+# r is a vector that contains the actual outcome, and pi is a vector that contains the fitted values. 
+
+cost <- function(r, pi = 0) mean(abs(r-pi) > 0.5)
+#cross validation
+cv.err = cv.glm(diabetes, glm.fits, cost = cost)
+cv.err$delta
+
+```
+The LOOCV error rate is 22.2 percent. 
+
+Let's also try the K-fold cross-validation. 
+
+```{r}
+# K fold cross validation
+cv.error.5 = cv.glm(diabetes, glm.fits, cost = cost, K=5)$delta
+cv.error.5
+```
+
+The K-fold cross-validation error with K=5 is 22.39 percent. 
+
+In summary, the training error rate is 22 percent, the test error rate is about 43 percent, and the cross-validation error rate is about 35 percent. 
+
+
+
+#Logistic Regression with Generalized Additive Models
+```{r}
+
+gam.lr = gam(I(Outcome) ~ s(Pregnancies,4) + s(Glucose,4) + s(BloodPressure,4) + s(SkinThickness,4) + s(Insulin,4) + s(BMI,4) + s(DiabetesPedigreeFunction,4) + s(Age,4), data = diabetes, family = binomial)
+
+plot(gam.lr, se=T)
+```
+
+In summary, holding all other variables constant, we can see: 
+- number of pregnancies does not seem to be related to diabetic status
+- diabetic status is positively correlated with glucose level (as expected)
+- diabetic status is negatively correlated with blood pressure (unexpected result)
+- diabetic status does not seem correlated with skin thickness.
+- diabetic status also does not seem correlated with insulin level 
+- diabetic status is positively associated with BMI
+- diabetic status has a curved relationship with pedigree and age; the peak seems to occur in the middle values of the pedigree and in middle age(about 50 years old).
+
+In general, these results suggest that the GAM model with splines may be overkill because there are few truly complex, nonlinear relationships here. These results do suggest that we could consider eliminating certain variables that do not seem related to outcome, such as the number of pregnancies and skin thickness. 
+
+
+Now, we want to use the predict function to predict the probability that an individual will have diabetes, given values of the predictors.
+```{r}
+#predicting whether an individual will have diabetes given the values of the predictors
+glm.probs = predict(gam.lr, type = "response")
+
+#creating a confusion matrix
+glm.pred = rep("0", nrow(diabetes)) # 0 is healthy
+glm.pred[glm.probs > 0.5] = "1"     # 1 is diabetic
+table(glm.pred, diabetes$Outcome)
+
+#calculating the fraction of days for which the prediction was correct
+mean(glm.pred == diabetes$Outcome)
+mean(glm.pred != diabetes$Outcome)
+```
+
+
+Let's calculate the test error for the logistic GAM model. 
+
+```{r}
+error = c()
+
+for (i in 1:500){
+  
+#splitting into training and validation sets
+set.seed(i)
+train = sample(768, 384)
+diabetes.train = diabetes[train,]
+diabetes.test = diabetes[-train,]
+
+#training model on the training set
+gam.lr1 = gam(I(Outcome) ~ s(Pregnancies,4) + s(Glucose,4) + s(BloodPressure,4) + s(SkinThickness,4) + s(Insulin,4) + s(BMI,4) + s(DiabetesPedigreeFunction,4) + s(Age,4), data = diabetes.train, family = binomial)
+
+#test error rate
+glm.probs.test = predict(gam.lr1, diabetes.test, type = "response")
+
+#creating a confusion matrix
+glm.pred.test = rep("0", 384)            # 0 is healthy
+glm.pred.test[glm.probs.test > 0.5] = "1"     # 1 is diabetic
+table(glm.pred.test, diabetes.test$Outcome)
+
+#calculating the fraction of days for which the prediction was correct
+error[i] = mean(glm.pred.test != diabetes.train$Outcome)
+
+}
+
+```
+
+
+```{r}
+hist(error, breaks = 50)
+summary(error)
+```
+
+The test error rate for the logistic GAM regression is 43.87 percent. This is not an improvement on the logistic linear regression above. The additional complexity of this GAM model did not improve the prediction ability, so this suggests that there may be better models to use. 
+
+
+
+#Non-parametric approach: KNN classification
+Let's try a non-parametric approach, KNN classification. 
+
+First, we need to standardize all of the data so all variables have a mean of zero and a standard deviation of 1. 
+```{r}
+library(class)
+standardized.X = scale(diabetes[,-9])
+
+
+#now splitting into a test set and training set. 
+# doing two for loops. 
+#The inner loop (i) is sampling the test and training sets 100 different ways, and then calculates the prediction error rate. # The outer loop (j) is increasing the number of K neighbors from 2 to 40. 
+error = c()
+mean.error=c()
+var.error=c()
+
+# j is the number of K neighbors. 
+for (j in 2:50){
+  
+  # i is the seed for sampling the test and training sets. 
+  for (i in 1:200){
+  set.seed(i)  
+  test = sample(768, 384)
+  train.X = standardized.X[-test,]
+  test.X = standardized.X[test,]
+
+  train.Y = diabetes$Outcome[-test]
+  test.Y = diabetes$Outcome[test]
+
+  knn.pred = knn(train.X, test.X, train.Y, k=j)
+  error[i] = mean(test.Y != knn.pred)
+  }
+  mean.error[j]= mean(error)
+  var.error[j]=var(error)
+}
+```
+
+```{r}
+j=c(2:50)
+mean.error1 <- mean.error[-1]
+
+qplot(j, mean.error1)+
+  geom_point(aes(x=j, y=mean.error1))
+
+
+```
+
+
+
+
+```{r}
+
+plot(mean.error)
+min(mean.error[2:length(mean.error)])
+match(min(mean.error[2:length(mean.error)]), mean.error)
+```
+
+The optimal number of neighbors to minimize the test prediction error is around 31. The test prediction error decreases as K increases from 2 to 31, and then it increases again as K increases from 31 to 50. 
+The minimum prediction error rate is 25.7 percent, and it is attained at K = 31.
+
+
+#Decision Trees. 
+
+Let's try a classification tree. 
+
+```{r}
+Outcome1 = ifelse(diabetes$Outcome >= 1,  "Diabetic", "Healthy")
+diabetes = data.frame(diabetes, Outcome1)
+
+tree.diabetes = tree(as.factor(Outcome1) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes, method = "class")
+summary(tree.diabetes)
+
+```
+The missclassification error rate is 20.57 percent, which is better than the logistic regressions. 
+
+```{r}
+plot(tree.diabetes)
+text(tree.diabetes, pretty = 0)
+```
+
+Estimating the test error of the classification tree. 
+
+```{r}
+set.seed(1)
+train = sample(768, 384)
+diabetes.train = diabetes[train,]
+diabetes.test = diabetes[-train,]
+
+#training model on the training set
+tree.diabetes1 = tree(as.factor(Outcome1) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, method = "class")
+
+#test error rate
+tree.pred = predict(tree.diabetes1, diabetes.test, type = "class")
+
+#creating a confusion matrix
+table(tree.pred, diabetes.test$Outcome1)
+
+
+```
+
+```{r}
+(54+65)/(72+54+65+193)
+```
+
+
+Cross validation. 
+```{r}
+set.seed(2)
+cv.diabetes.tree = cv.tree(tree.diabetes, FUN = prune.misclass)
+cv.diabetes.tree
+
+```
+
+```{r}
+197/768
+```
+
+
+dev corresponds to the cross-validation error rate. 
+size represents the number of terminal nodes of each tree considered.
+k is the value of the cost-complexity parameter used. 
+
+
+
+```{r}
+plot(cv.diabetes.tree$size, cv.diabetes.tree$dev, type = "b")
+plot(cv.diabetes.tree$k, cv.diabetes.tree$dev, type = "b")
+```
+
+The tree size of 6 terminal nodes results in low cross-validation error rate. 
+
+Let's make a pruned tree and see how well it performs on the test dataset. 
+```{r}
+
+prune.diabetes = prune.misclass(tree.diabetes1, best = 6)
+plot(prune.diabetes)
+text(prune.diabetes, pretty = 0)
+
+tree.pred =predict(prune.diabetes, diabetes.test, type = "class")
+table(tree.pred, diabetes.test$Outcome1)
+```
+```{r}
+#correct classification rate
+(69+230)/(69+230+65+20)
+
+#error rate
+1-(69+230)/(69+230+65+20)
+```
+
+About 77.86 percent of observations are correctly classified. The classification error rate is 22.13 percent. This is a relatively good classification method (compared to logistic regression), and the classification tree makes intuitive sense. 
+
+##Bagging, random forests, and boosting. 
+In bagging, the trees are repeatedly fit to bootstrapped subsets of the observations. Each bagged tree makes use of around two-thirds of the observations, and the remaining one-third are out-of-bag observations. We can compute the OOB classification error rate. 
+
+Bagging (m=p)
+```{r}
+library(randomForest)
+set.seed(1)
+bag.diabetes = randomForest(as.factor(Outcome1) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, mtry=8, importance=TRUE) 
+bag.diabetes
+```
+
+The misclassification rate for the bagging procedure is 22.4 percent. 
+
+
+Random Forests improve on bagging by decorrelating the trees. 
+Random Forest (m= sqrt(p) = sqrt(8)= 2)
+```{r}
+set.seed(1)
+randomforest.diabetes = randomForest(as.factor(Outcome1) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, mtry=2, importance=TRUE) 
+randomforest.diabetes
+```
+
+The misclassification rate for the random forest procedure is 25.26 percent. 
+
+We can look at what are the most important variables in making the classification. 
+```{r}
+importance(randomforest.diabetes)
+varImpPlot(randomforest.diabetes)
+```
+
+The random forest procedure suggests that blood glucose, age, and BMI are the three most important predictors of whether an individual is diabetic or not. 
+
+
+Now trying boosting. 
+```{r}
+library(gbm)
+set.seed(1)
+boost.diabetes = gbm(Outcome ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, distribution="bernoulli", n.trees = 500, interaction.depth = 4)
+summary(boost.diabetes)
+```
+Glucose and BMI are the most important variables to predict diabetes. Age and diabetes pedigree also matter. 
+We can plot partial dependence plots for these variables, which illustrate the marginal effect of the selected variables on the response after integrating out the other variables. As we might expect, the likelihood of diabetes increases with increasing glucose and BMI. 
+
+```{r}
+par(mfrow=c(1,2))
+plot(boost.diabetes, i="Glucose")
+plot(boost.diabetes, i="BMI")
+
+```
+
+
+#Support Vector Machine. 
+```{r}
+library(e1071)
+
+svm.diabetes=svm(as.factor(Outcome) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes, kernel = "linear", cost = 0.1, scale = FALSE)
+summary(svm.diabetes)
+
+plot(svm.diabetes, diabetes, Glucose ~ BMI)
+```
+
+```{r}
+#Performing cross-validation on a set of models of interest. 
+
+set.seed(1)
+train = sample(768, 384)
+diabetes.train = diabetes[train,]
+diabetes.test = diabetes[-train,]
+
+tune.out = tune(svm, as.factor(Outcome) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, kernel = "linear", ranges = list(cost=c(0.001, 0.01, 0.1, 1, 10, 50, 100)))
+summary(tune.out)
+
+```
+
+Cost = 0.1 results in the lowest cross-validation error rate. 
+
+```{r}
+#creating the best model
+bestmod=tune.out$best.model
+summary(bestmod)
+
+plot(bestmod, diabetes, Glucose ~ BMI)
+```
+
+Now calculating the test error rate in the predictions of the best SVM model.
+```{r}
+
+ypred=predict(bestmod, diabetes.test)
+table(predict=ypred, truth=diabetes.test$Outcome)
+```
+
+```{r}
+#error rate
+(67+31)/(384)
+
+```
+
+The test misclassification error rate is 25.52 percent.
+
+Now doing the Support Vector Machine with a nonlinear kernel. 
+```{r}
+svm.diabetes=svm(as.factor(Outcome) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes, kernel = "radial", gamma=0.1, cost = 1)
+summary(svm.diabetes)
+
+plot(svm.diabetes, diabetes, Glucose ~ BMI)
+
+
+```
+
+Let's use cross-validation using tune() to select the best choice of gamma and cost for an SVM with a radial kernel. 
+
+```{r}
+set.seed(1)
+tune.out = tune(svm, as.factor(Outcome) ~ Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age, data = diabetes.train, kernel = "radial", 
+                ranges = list(cost=c(0.01, 0.1, 1, 10, 100),
+                              gamma=c(0.01,0.1,0.5,1,2)))
+summary(tune.out)
+
+
+```
+
+The best choice of parameters involves cost=1 and gamma=0.01.
+```{r}
+#creating the best model
+bestmod=tune.out$best.model
+summary(bestmod)
+
+plot(bestmod, diabetes, Glucose ~ BMI)
+```
+
+
+
+We can view the test set predictions for this model by applying the predict() function to the data. Let's calculate the error classification rate. 
+
+```{r}
+
+ypred=predict(bestmod, diabetes.test)
+table(predict=ypred, truth=diabetes.test$Outcome)
+
+
+```
+```{r}
+(75+28)/(384)
+```
+
+The classification error rate is 26.8 percent. 
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
