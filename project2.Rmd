@@ -89,7 +89,7 @@ glm.pred.test[glm.probs.test > 0.5] = "1"     # 1 is diabetic
 table(glm.pred.test, diabetes.test$Outcome)
 
 #calculating the fraction of days for which the prediction was correct
-error[i] = mean(glm.pred.test != diabetes.train$Outcome)
+error[i] = mean(glm.pred.test != diabetes.test$Outcome)
 
 }
 
@@ -97,11 +97,11 @@ error[i] = mean(glm.pred.test != diabetes.train$Outcome)
 
 
 ```{r}
-hist(error, breaks = 50)
+hist(error, breaks = 20)
 summary(error)
 ```
 
-When we do a cross validation by splitting the data into test and validation sets, the model accurately predicts diabetic status only about 57 percent of the time. The mean test error rate is 43.29 percent, and I plotted the distribution of test error rate. 
+When we do a cross validation by splitting the data into test and validation sets, the model accurately predicts diabetic status only about 57 percent of the time. The mean test error rate is 23 percent, and I plotted the distribution of test error rate. 
 
 
 
@@ -111,7 +111,11 @@ When we do a cross validation by splitting the data into test and validation set
 #creating a cost function
 # r is a vector that contains the actual outcome, and pi is a vector that contains the fitted values. 
 
-cost <- function(r, pi = 0) mean(abs(r-pi) > 0.5)
+#cost <- function(r, pi = 0) mean(abs(r-pi) > 0.5)
+cost <- function(r, pi = 0) {
+  mean((pi < 0.5) & r==1 | (pi > 0.5) & r==0)
+}
+
 #cross validation
 cv.err = cv.glm(diabetes, glm.fits, cost = cost)
 cv.err$delta
@@ -129,7 +133,7 @@ cv.error.5
 
 The K-fold cross-validation error with K=5 is 22.39 percent. 
 
-In summary, the training error rate is 22 percent, the test error rate is about 43 percent, and the cross-validation error rate is about 35 percent. 
+In summary, the training error rate is 22 percent, the test error rate is about 23 percent, and the cross-validation error rate is about 22 percent. 
 
 
 
@@ -194,7 +198,7 @@ glm.pred.test[glm.probs.test > 0.5] = "1"     # 1 is diabetic
 table(glm.pred.test, diabetes.test$Outcome)
 
 #calculating the fraction of days for which the prediction was correct
-error[i] = mean(glm.pred.test != diabetes.train$Outcome)
+error[i] = mean(glm.pred.test != diabetes.test$Outcome)
 
 }
 
@@ -202,11 +206,11 @@ error[i] = mean(glm.pred.test != diabetes.train$Outcome)
 
 
 ```{r}
-hist(error, breaks = 50)
+hist(error, breaks = 20)
 summary(error)
 ```
 
-The test error rate for the logistic GAM regression is 43.87 percent. This is not an improvement on the logistic linear regression above. The additional complexity of this GAM model did not improve the prediction ability, so this suggests that there may be better models to use. 
+The test error rate for the logistic GAM regression is 23 percent. This is not an improvement on the logistic linear regression above. The additional complexity of this GAM model did not improve the prediction ability, so this suggests that there may be better models to use. 
 
 
 
@@ -496,17 +500,86 @@ plot(bestmod, diabetes, Glucose ~ BMI)
 We can view the test set predictions for this model by applying the predict() function to the data. Let's calculate the error classification rate. 
 
 ```{r}
-
 ypred=predict(bestmod, diabetes.test)
 table(predict=ypred, truth=diabetes.test$Outcome)
-
-
 ```
 ```{r}
 (75+28)/(384)
 ```
 
 The classification error rate is 26.8 percent. 
+
+
+
+#Neural Networks 
+I am using a tutorial from Datacamp to implement a simple neural network.
+https://www.datacamp.com/community/tutorials/neural-network-models-r 
+
+I also used this tutorial: 
+https://datascienceplus.com/neuralnet-train-and-test-neural-networks-using-r/ 
+
+
+```{r}
+require(neuralnet)
+
+#scaling the data 
+scaled.diabetes <- data.frame(scale(diabetes[1:8]),diabetes[9])
+scaled.diabetes.train <- scaled.diabetes[train,]
+scaled.diabetes.test <- scaled.diabetes[-train,]
+
+```
+
+
+```{r}
+#fitting the neural network
+set.seed(1)
+nn = neuralnet(Outcome ~  Pregnancies + Glucose + BloodPressure + SkinThickness + Insulin + BMI + DiabetesPedigreeFunction + Age,  data = scaled.diabetes.train, hidden = c(3), act.fct = "logistic", linear.output = FALSE, threshold = 0.01)
+
+  # hidden=3: represents single layer with 3 neurons respectively.
+  # act.fct = "logistic" used for smoothing the result.
+  # linear.ouput=FALSE: set FALSE for apply act.fct otherwise TRUE
+
+plot(nn)
+
+
+```
+
+
+```{r}
+#Now, prediction using the neural network
+
+#predict the probability score for the test data using the compute function. 
+Predict = compute(nn, data.frame(scaled.diabetes.test[1:8]))
+
+#Predict$net.result 
+
+#converting probabilities into binary classes. 
+prob <- Predict$net.result
+pred <- ifelse(prob>0.5, 1, 0)
+
+test.results <- data.frame(actual = scaled.diabetes.test$Outcome, prediction = Predict$net.result, pred)
+
+
+```
+
+
+```{r}
+#now creating a confusion matrix. 
+table(predict=pred, truth=scaled.diabetes.test$Outcome)
+
+```
+
+```{r}
+(43+65)/(214+65+72+33)
+```
+
+The neural net's error rate was 28 percent when I used one hidden layers. The error rate can go down to about 24 percent when I use two hidden layers, but the algorithm takes longer to run. 
+
+In general, the neural network is more complex (less interpretable) than the simple logistic regression, and it does not perform significantly better. 
+
+All of the methods I tried on this dataset have an error rate between 20 to 30 percent. None of the methods stood out as much better than the others. Some, like the logistic regression and the random forests, are easily interpretable. Others like the KNN classifier or the neural network are more complex and not as interpretable. Yet their performance was not significantly better. For a given level of performance on this dataset, then, it is better to use simple and interpretable methods. 
+
+The error rate > 20 percent suggests that there is a significant amount of variation in the outcome that cannot be explained by the variables in the data. There could be other predictors that are important to add to a future dataset that would allow better prediction of diabetes. For example, diet, sleep, activity level, 
 
 
 ## R Markdown
